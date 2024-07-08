@@ -1,0 +1,117 @@
+---
+import { alias } from 'astro:db';
+import { eq } from 'astro:db';
+import { Resource, ResourceRelationships, db, sql } from 'astro:db';
+
+const data = await db.run(sql`
+	SELECT
+		r."id",
+		r."fields",
+		CASE WHEN child."id" IS NOT NULL
+			THEN JSON_GROUP_ARRAY(JSON(child."fields"))
+			ELSE JSON('[]')
+			END "child_fields"
+	FROM Resource AS r
+	LEFT JOIN ResourceRelationships AS children
+	ON r.id = children.parentId
+		LEFT JOIN Resource AS child
+		ON children.childId = child.id
+	GROUP BY r.id
+`);
+
+const child = alias(Resource, 'children');
+const data2 = await db
+	.select({
+		id: Resource.id,
+		fields: Resource.fields,
+		child_fields: child.fields, // <-- how do you get array of all children?
+	})
+	.from(Resource)
+	.leftJoin(
+		ResourceRelationships,
+		eq(Resource.id, ResourceRelationships.parentId),
+	)
+	.leftJoin(child, eq(ResourceRelationships.childId, child.id))
+	.groupBy(Resource.id)
+	.all();
+
+const data3 = await db
+	.select({
+		id: Resource.id,
+		fields: Resource.fields,
+		child_fields: sql`JSON_GROUP_ARRAY(JSON(${child.fields}))`, // <-- how do you get array of all children?
+	})
+	.from(Resource)
+	.leftJoin(
+		ResourceRelationships,
+		eq(Resource.id, ResourceRelationships.parentId),
+	)
+	.leftJoin(child, eq(ResourceRelationships.childId, child.id))
+	.groupBy(Resource.id)
+	.all();
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="generator" content={Astro.generator} />
+		<title>Astro</title>
+	</head>
+	<body>
+		<h1>JSON Escaping Repro</h1>
+		<h2>
+			Using <code>sql``</code> returns all children properly, but escapes JSON
+		</h2>
+		<pre>{JSON.stringify(data.rows, null, 2)}</pre>
+
+		<h2>
+			Using <code>.select()</code> doesn't return all children, but JSON works properly
+		</h2>
+		<pre>{JSON.stringify(data2, null, 2)}</pre>
+
+		<h2>
+			Combining <code>.select()</code> with <code>sql``</code> fixes children, but
+			escapes JSON again
+		</h2>
+		<pre>{JSON.stringify(data3, null, 2)}</pre>
+
+		<h2>Expected result</h2>
+		<pre>{`[
+  {
+    "id": "test-1",
+    "fields": {
+      "slug": "one",
+      "draft": true
+    },
+    "child_fields": [
+      {
+        "slug": "two",
+        "draft": false
+      },
+      {
+        "slug": "three",
+        "draft": false
+      }
+    ]
+  },
+  {
+    "id": "test-2",
+    "fields": {
+      "slug": "two",
+      "draft": false
+    },
+    "child_fields": null
+  },
+  {
+    "id": "test-3",
+    "fields": {
+      "slug": "three",
+      "draft": false
+    },
+    "child_fields": null
+  }
+]`}</pre>
+	</body>
+</html>
